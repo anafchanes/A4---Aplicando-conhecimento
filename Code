@@ -1,0 +1,137 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <DHT.h>
+#include <Wire.h>
+#include <BH1750.h>
+
+// Configuração do Wi-Fi
+const char* ssid = "your_SSID"; // Substitua pelo nome da sua rede Wi-Fi
+const char* password = "your_PASSWORD"; // Substitua pela sua senha Wi-Fi
+
+// Configuração do MQTT
+const char* mqtt_server = "broker.hivemq.com"; // Alterar para o seu broker MQTT
+const char* mqtt_user = ""; // Usuário MQTT, se necessário
+const char* mqtt_pass = ""; // Senha MQTT, se necessário
+const int mqtt_port = 1883;
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// Configuração dos sensores
+#define DHTPIN 4 // Pino para o sensor DHT22
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+BH1750 lightSensor;
+
+#define RELAY_PIN 13 // Pino de controle do relé
+
+void setup() {
+  // Inicializa o monitor serial
+  Serial.begin(115200);
+  
+  // Inicializa o sensor DHT22
+  dht.begin();
+  
+  // Inicializa o sensor de luminosidade BH1750
+  Wire.begin();
+  lightSensor.begin();
+
+  // Configura o pino do relé
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW); // Inicializa o relé desligado
+
+  // Conecta-se à rede Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Conectando-se ao Wi-Fi...");
+  }
+  Serial.println("Conectado ao Wi-Fi!");
+
+  // Conecta-se ao servidor MQTT
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(mqttCallback);
+  
+  // Aguarda até que a conexão MQTT seja estabelecida
+  while (!client.connected()) {
+    Serial.println("Conectando ao MQTT...");
+    if (client.connect("ESP32Client", mqtt_user, mqtt_pass)) {
+      Serial.println("Conectado ao MQTT!");
+      client.subscribe("casa/sala/controle"); // Assina o tópico de controle do relé
+    } else {
+      delay(5000);
+    }
+  }
+}
+
+void loop() {
+  // Verifica se o cliente MQTT está conectado
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+  client.loop();
+
+  // Lê os dados do sensor DHT22 (Temperatura e Umidade)
+  float temp = dht.readTemperature();
+  float humidity = dht.readHumidity();
+  
+  // Lê o valor de luminosidade (intensidade da luz)
+  uint16_t lux = lightSensor.readLightLevel();
+
+  // Verifica se os sensores estão funcionando corretamente
+  if (isnan(temp) || isnan(humidity)) {
+    Serial.println("Falha na leitura do sensor DHT!");
+    return;
+  }
+
+  // Publica os dados no broker MQTT
+  char temp_str[8];
+  char humidity_str[8];
+  char lux_str[8];
+  dtostrf(temp, 1, 2, temp_str);
+  dtostrf(humidity, 1, 2, humidity_str);
+  dtostrf(lux, 1, 2, lux_str);
+
+  client.publish("casa/sala/temperatura", temp_str);
+  client.publish("casa/sala/umidade", humidity_str);
+  client.publish("casa/sala/luminosidade", lux_str);
+
+  // Aciona o relé com base nos valores de temperatura e luminosidade
+  if (temp > 30.0) { // Se a temperatura for superior a 30°C, liga o ventilador
+    digitalWrite(RELAY_PIN, HIGH);
+  } else if (lux < 200) { // Se a luminosidade for baixa, liga a lâmpada
+    digitalWrite(RELAY_PIN, HIGH);
+  } else {
+    digitalWrite(RELAY_PIN, LOW); // Desliga o relé se as condições não forem atendidas
+  }
+
+  // Espera 10 segundos antes de realizar uma nova leitura
+  delay(10000);
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+
+  // Verifica o comando para ligar/desligar o relé
+  if (String(topic) == "casa/sala/controle") {
+    if (message == "ON") {
+      digitalWrite(RELAY_PIN, HIGH);
+    } else if (message == "OFF") {
+      digitalWrite(RELAY_PIN, LOW);
+    }
+  }
+}
+
+void reconnectMQTT() {
+  while (!client.connected()) {
+    Serial.print("Tentando reconectar ao MQTT...");
+    if (client.connect("ESP32Client", mqtt_user, mqtt_pass)) {
+      Serial.println("Reconectado ao MQTT!");
+      client.subscribe("casa/sala/controle");
+    } else {
+      delay(5000);
+    }
+  }
+}
