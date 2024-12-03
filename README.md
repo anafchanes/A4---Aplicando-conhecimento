@@ -4,7 +4,7 @@ Este projeto implementa um sistema de gestão de energia utilizando IoT (Interne
 
 ## Componentes
 
-- **ESP32** (Microcontrolador com Wi-Fi integrado)
+- **ESP32** (Microcontrolador)
 - **Sensor DHT22** (Temperatura e Umidade)
 - **Sensor BH1750** (Luminosidade)
 - **Relé de Estado Sólido (SSR)** (Controle de dispositivos de alta potência)
